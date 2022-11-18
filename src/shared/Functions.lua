@@ -1,18 +1,28 @@
 local module = {}
 local lighting = game:GetService("Lighting")
+
 module.length = function(v)
 	return math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z)
 end
+
 module.distance = function(a,b)
 	return math.sqrt((b.x-a.x)^2 + (b.y-a.y)^2+(b.z-a.z)^2)
 end
+
 module.GroundDistance = function(eye)
     return eye.y
 end
-module.SphereDistance = function(eye, centre, radius) 
-    return module.distance(eye, centre) - radius;
+
+module.sdSphere = function(eye, centre, radius) 
+    return module.distance(eye, centre) - radius
 end
-module.CubeDistance = function(eye, centre, size,rotation) 
+
+  p = eye-centre
+  p -= Vector3.new(0,math.clamp( p.y, -w/2, w/2 ),0)
+  return module.length(p) - radius
+end
+
+module.sdBox = function(eye, centre, size,rotation) 
     if rotation ~= Vector3.new(0,0,0) then
         local centerCFrame = CFrame.new(centre)
         local eyeTemp = centerCFrame:PointToObjectSpace(eye)
@@ -24,15 +34,19 @@ module.CubeDistance = function(eye, centre, size,rotation)
     local n = math.max(math.max(math.min(o.x,0),math.min(o.y,0)), math.min(o.z,0));
     return ud+n;
 end
-module.ObjectRollover = function(Position,RenderObjects)
+
+module.ObjectRollover = function(Position,RenderObjects,DistanceObjects)
 	local minDist = math.huge
     local minDistObject = 0
-	for i = 1, #RenderObjects do
-        local dist = RenderObjects[i].SDF(Position,RenderObjects[i].Position,RenderObjects[i].Size,RenderObjects[i].Rotation)
+	for i = 1, #DistanceObjects do
+        local dist = RenderObjects[DistanceObjects[i]].SDF(Position,RenderObjects[DistanceObjects[i]].Position,RenderObjects[DistanceObjects[i]].Size,RenderObjects[DistanceObjects[i]].Rotation,RenderObjects[DistanceObjects[i]].W)
+        if dist == nil then
+			dist = 100
+		end
         if dist == 0 then
             dist = 0.001
-		--elseif dist < 0 then
-		--	dist = math.abs(dist)
+		elseif dist < 0 then
+			dist = 100
 		end
 
         if dist < minDist and dist > 0 then
@@ -42,8 +56,8 @@ module.ObjectRollover = function(Position,RenderObjects)
     end
 	return minDist,minDistObject
 end
-module.ShadowCompute = function(unitRay,RenderObjects,previousDist)
-	local maxMinDists = 0
+module.ShadowCompute = function(unitRay,DistanceObjects,previousDist,RenderObjects)
+    local maxMinDists = 0
     local minMinDists = math.huge
     local minDists = {}
     local i = 1
@@ -51,14 +65,14 @@ module.ShadowCompute = function(unitRay,RenderObjects,previousDist)
     while (minMinDists >= previousDist/1.1 and maxMinDists < 100) do
         minDists[i] = math.huge
         Position = Vector3.new(unitRay.Origin.x+maxMinDists*unitRay.Direction.x,unitRay.Origin.y+maxMinDists*unitRay.Direction.y,unitRay.Origin.z+maxMinDists*unitRay.Direction.z)
-        minDists[i],minDistsObject = module.ObjectRollover(Position,RenderObjects)
+        minDists[i],minDistsObject = module.ObjectRollover(Position,RenderObjects,DistanceObjects)
         if minDists[i] < minMinDists and minDists[i] > 0 then
             minMinDists = minDists[i]
         end
         maxMinDists += minDists[i]
         i += 1
     end
-	if minMinDists < previousDist/1.1 then
+    if minMinDists < previousDist/1.1 then
 		returnValue = 0
 	elseif maxMinDists >= 100 then
 		returnValue =  1
@@ -74,7 +88,7 @@ module.shallowCopy = function(original)
     return copy
 end
 
-module.Compute = function(unitRay,RenderObjects,i,j,devisor)
+module.Compute = function(unitRay,DistanceObjects,RenderObjects)
 	local maxMinDists = 0
     local minMinDistsObject = 0
     local minMinDistsPosition = Vector3.new(0,0,0)
@@ -82,7 +96,6 @@ module.Compute = function(unitRay,RenderObjects,i,j,devisor)
     local minDists = {}
     local i = 1
 	local returnValue = 0 
-    PPosition = Vector3.new(0,0,0)
     while minMinDists >= 0.002 and maxMinDists < 50 do
         --Circles[i] = Instance.new("Part")
         --Circles[i].Transparency = 0.5
@@ -95,19 +108,15 @@ module.Compute = function(unitRay,RenderObjects,i,j,devisor)
         --Circles[i].CastShadow = false
         minDists[i] = math.huge
         Position = Vector3.new(unitRay.Origin.x+maxMinDists*unitRay.Direction.x,unitRay.Origin.y+maxMinDists*unitRay.Direction.y,unitRay.Origin.z+maxMinDists*unitRay.Direction.z)
-        minDists[i],minDistsObject = module.ObjectRollover(Position,RenderObjects)
+        minDists[i],minDistsObject = module.ObjectRollover(Position,RenderObjects,DistanceObjects)
         --Circles[i].Size = Vector3.new(minDists[i]*2,minDists[i]*2,minDists[i]*2)
         if minDists[i] < minMinDists and minDists[i] > 0 then
             minMinDists = minDists[i]
             minMinDistsObject = minDistsObject
             minMinDistsPosition = Position
-            --if PPosition == Vector3.new(0,0,0) then
-            --    minMinDistsPosition = Position
-            --end
         end
         maxMinDists += minDists[i]
         i += 1
-        PPosition = Position
     end
 	if minMinDists < 0.002 then
 		returnValue = 1
@@ -116,5 +125,8 @@ module.Compute = function(unitRay,RenderObjects,i,j,devisor)
 	end
 
 	return returnValue,maxMinDists,minMinDistsObject,minMinDistsPosition,minMinDists
+end
+module.map = function(x, in_min, in_max, out_min, out_max)
+	return out_min + (x - in_min)*(out_max - out_min)/(in_max - in_min)
 end
 return module
